@@ -1,0 +1,17 @@
+.git
+.github
+.npm-cache
+coverage
+dist
+node_modules
+logs
+*.log
+.env
+.env.*
+!.env.example
+!.env.production.example
+*.tsbuildinfo
+infra/.terraform
+infra/*.tfstate
+infra/*.tfstate.*
+infra/plan.out
