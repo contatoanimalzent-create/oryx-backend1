@@ -16,6 +16,8 @@ Main branch:
 main
 ```
 
+For the exact copy/paste flow inside AWS CloudShell, use [AWS_CLOUDSHELL_RUNBOOK.md](AWS_CLOUDSHELL_RUNBOOK.md).
+
 ## Target Architecture
 
 - GitHub stores the source code.
@@ -176,4 +178,3 @@ Then verify:
 ```text
 https://api.<your-domain>/health
 ```
-

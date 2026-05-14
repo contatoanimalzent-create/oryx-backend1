@@ -131,6 +131,34 @@ resource "aws_security_group" "ecs_tasks" {
   }
 }
 
+resource "aws_security_group" "alb" {
+  name        = "${local.name_prefix}-alb"
+  description = "Public ALB for ORYX API."
+  vpc_id      = aws_vpc.main.id
+
+  tags = {
+    Name = "${local.name_prefix}-alb"
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "alb_http" {
+  security_group_id = aws_security_group.alb.id
+  description       = "HTTP from the internet. Cloudflare DNS/proxy sits in front."
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 80
+  to_port           = 80
+  ip_protocol       = "tcp"
+}
+
+resource "aws_vpc_security_group_egress_rule" "alb_to_ecs" {
+  security_group_id            = aws_security_group.alb.id
+  description                  = "Forward API traffic to ECS tasks."
+  referenced_security_group_id = aws_security_group.ecs_tasks.id
+  from_port                    = 3000
+  to_port                      = 3000
+  ip_protocol                  = "tcp"
+}
+
 resource "aws_security_group" "rds" {
   name        = "${local.name_prefix}-rds"
   description = "RDS PostgreSQL. Inbound 5432 only from ECS tasks."
@@ -157,6 +185,15 @@ resource "aws_vpc_security_group_egress_rule" "ecs_egress_all" {
   description       = "Allow all egress."
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
+}
+
+resource "aws_vpc_security_group_ingress_rule" "ecs_from_alb" {
+  security_group_id            = aws_security_group.ecs_tasks.id
+  description                  = "API traffic from ALB."
+  referenced_security_group_id = aws_security_group.alb.id
+  from_port                    = 3000
+  to_port                      = 3000
+  ip_protocol                  = "tcp"
 }
 
 # RDS ingress: 5432 from ECS only.

@@ -56,3 +56,44 @@ variable "redis_num_cache_clusters" {
   type        = number
   default     = 1
 }
+
+variable "api_image_uri" {
+  description = "Full container image URI to deploy to ECS."
+  type        = string
+}
+
+variable "api_desired_count" {
+  description = "Number of API tasks to run."
+  type        = number
+  default     = 1
+}
+
+variable "api_cpu" {
+  description = "Fargate CPU units for the API task."
+  type        = number
+  default     = 512
+}
+
+variable "api_memory" {
+  description = "Fargate memory MB for the API task."
+  type        = number
+  default     = 1024
+}
+
+variable "jwt_access_ttl" {
+  description = "JWT access token TTL."
+  type        = string
+  default     = "15m"
+}
+
+variable "jwt_refresh_ttl" {
+  description = "JWT refresh token TTL."
+  type        = string
+  default     = "30d"
+}
+
+variable "app_log_level" {
+  description = "Application log level."
+  type        = string
+  default     = "info"
+}

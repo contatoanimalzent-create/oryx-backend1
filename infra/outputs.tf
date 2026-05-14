@@ -45,6 +45,36 @@ output "ecs_cluster_arn" {
   value       = aws_ecs_cluster.main.arn
 }
 
+output "ecs_cluster_name" {
+  description = "ECS Fargate cluster name."
+  value       = aws_ecs_cluster.main.name
+}
+
+output "ecr_repository_url" {
+  description = "ECR repository URL for the backend image."
+  value       = aws_ecr_repository.api.repository_url
+}
+
+output "api_load_balancer_dns_name" {
+  description = "Public ALB DNS name. Point api.oryxcontrol.com to this with a Cloudflare CNAME."
+  value       = aws_lb.api.dns_name
+}
+
+output "api_health_url" {
+  description = "HTTP health check URL for the API before Cloudflare DNS is configured."
+  value       = "http://${aws_lb.api.dns_name}/health"
+}
+
+output "api_env_secret_arn" {
+  description = "Secrets Manager secret used by the API ECS task."
+  value       = aws_secretsmanager_secret.api_env.arn
+}
+
+output "api_task_definition_arn" {
+  description = "ECS task definition ARN for the API."
+  value       = aws_ecs_task_definition.api.arn
+}
+
 output "iot_thing_type_name" {
   description = "IoT thing type for ORYX operators (mobile devices)."
   value       = aws_iot_thing_type.operator.name

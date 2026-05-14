@@ -85,3 +85,4 @@ Recommended final AWS path:
 The `infra/` directory already contains the Terraform foundation for AWS.
 
 See [AWS_DEPLOYMENT.md](AWS_DEPLOYMENT.md) for the end-to-end GitHub to AWS to Cloudflare checklist.
+If deploying from AWS CloudShell, follow [AWS_CLOUDSHELL_RUNBOOK.md](AWS_CLOUDSHELL_RUNBOOK.md).
