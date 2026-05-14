@@ -83,3 +83,5 @@ Recommended final AWS path:
 - Cloudflare DNS pointing `api.<domain>` to the AWS load balancer
 
 The `infra/` directory already contains the Terraform foundation for AWS.
+
+See [AWS_DEPLOYMENT.md](AWS_DEPLOYMENT.md) for the end-to-end GitHub to AWS to Cloudflare checklist.
