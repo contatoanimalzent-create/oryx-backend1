@@ -1,0 +1,671 @@
+// ORYX backend — Prisma schema (canonical source of truth for the database).
+// Domain models are added per feature module in Fase 1.x sessions.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [postgis, pgcrypto]
+}
+
+// ─── Auth (sessão 1.1) ──────────────────────────────────────────────────────
+
+/// RBAC roles. Single role per user for now (CLAUDE.md §3.6 — refactor to a
+/// user_roles join table when a real multi-role scenario lands).
+enum Role {
+  OPERATOR
+  SQUAD_LEADER
+  ADMIN
+  INSTRUCTOR
+}
+
+model User {
+  id                   String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email                String           @unique
+  passwordHash         String           @map("password_hash")
+  displayName          String           @map("display_name")
+  role                 Role             @default(OPERATOR)
+  createdAt            DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  refreshTokens        RefreshToken[]
+  operator             Operator?
+  createdEvents        Event[]          @relation("EventCreator")
+  deviceTokens         DeviceToken[]
+  createdNotifications Notification[]   @relation("NotificationCreator")
+  authoredReputation   ReputationLog[]  @relation("ReputationAuthor")
+  unitAssignments      UnitInstructor[]
+  ledClasses           Class[]          @relation("ClassLeadInstructor")
+
+  @@map("users")
+}
+
+/// Refresh tokens are stored as sha256(token) so a database leak does not
+/// disclose live tokens. Rotation: each /auth/refresh issues a new pair and
+/// marks the old row revokedAt = now().
+model RefreshToken {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+// ─── Operators (sessão 1.3) ─────────────────────────────────────────────────
+
+enum BloodType {
+  A_POS
+  A_NEG
+  B_POS
+  B_NEG
+  AB_POS
+  AB_NEG
+  O_POS
+  O_NEG
+  UNKNOWN
+}
+
+enum OperatorStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+// ─── Events (sessão 1.4) ────────────────────────────────────────────────────
+
+enum EventStatus {
+  DRAFT
+  ACTIVE
+  ENDED
+}
+
+enum EventMode {
+  WARFARE
+  COMPETITIVE
+  CHALLENGER
+  SNIPER
+  TACTICAL_TRAINING
+}
+
+/// Operational event (warfare run, competitive round, training class…).
+/// `operationalArea` is a GeoJSON Polygon stored as JSONB. PostGIS index +
+/// generated geography column come in session 1.11 (zones) when the first
+/// spatial query consumer lands.
+model Event {
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name            String
+  description     String?
+  mode            EventMode
+  status          EventStatus       @default(DRAFT)
+  operationalArea Json              @map("operational_area")
+  startsAt        DateTime?         @map("starts_at") @db.Timestamptz(6)
+  endsAt          DateTime?         @map("ends_at") @db.Timestamptz(6)
+  createdById     String?           @map("created_by_id") @db.Uuid
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy       User?             @relation("EventCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  teams           Team[]
+  positions       PositionHistory[]
+  zones           Zone[]
+  missions        Mission[]
+  reputationLogs  ReputationLog[]
+  cheatSuspicions CheatSuspicion[]
+  exercise        Exercise?
+  rounds          Round[]
+
+  @@index([status])
+  @@index([mode])
+  @@map("events")
+}
+
+// ─── Zones (sessão 1.11) ────────────────────────────────────────────────────
+
+/// Geographic zone within an event. `boundary` is a GeoJSON Polygon stored
+/// as JSONB. The migration adds a generated `boundary_geo geography(Polygon,
+/// 4326)` column with a GIST index — mission engine (1.13) queries that one
+/// for ST_Contains / ST_Within against incoming positions.
+///
+/// Mission types (CAPTURE/DEFEND/HOLD/...) are NOT modeled here — zones are
+/// pure geometry; missions decide how to interpret them (sessão 1.12).
+model Zone {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventId     String    @map("event_id") @db.Uuid
+  name        String
+  description String?
+  boundary    Json
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  event       Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  missions    Mission[]
+
+  @@unique([eventId, name])
+  @@index([eventId])
+  @@map("zones")
+}
+
+// ─── Missions (sessão 1.12) ─────────────────────────────────────────────────
+
+enum MissionType {
+  CAPTURE
+  DEFEND
+  HOLD
+  CHECKPOINT
+  TIME
+  SQUAD
+  FACTION
+}
+
+enum MissionStatus {
+  PENDING
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+/// Goal within an event. `type` decides what `config` should look like and
+/// whether `zoneId` is required — discriminated-union validation in the
+/// service layer (mission-engine in 1.13 reads it). `status` is owned by the
+/// engine; admin can manually set it to CANCELLED via PATCH.
+model Mission {
+  id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventId      String            @map("event_id") @db.Uuid
+  type         MissionType
+  name         String
+  description  String?
+  zoneId       String?           @map("zone_id") @db.Uuid
+  config       Json
+  pointsReward Int               @default(0) @map("points_reward")
+  status       MissionStatus     @default(PENDING)
+  createdAt    DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  event        Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  zone         Zone?             @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+  progress     MissionProgress[]
+
+  @@unique([eventId, name])
+  @@index([eventId])
+  @@index([zoneId])
+  @@index([status])
+  @@map("missions")
+}
+
+// ─── Mission progress (sessão 1.13) ─────────────────────────────────────────
+
+enum MissionProgressState {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+/// Per-operator progress on a mission. mission-engine upserts this after
+/// each position event. `progress` JSONB carries type-specific state — e.g.
+/// CAPTURE: { secondsAccumulated, lastInsideAt }. SQUAD/FACTION aggregations
+/// come with ranking (1.15).
+model MissionProgress {
+  id          String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  missionId   String               @map("mission_id") @db.Uuid
+  operatorId  String               @map("operator_id") @db.Uuid
+  state       MissionProgressState @default(NOT_STARTED)
+  progress    Json                 @default("{}")
+  completedAt DateTime?            @map("completed_at") @db.Timestamptz(6)
+  createdAt   DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  mission     Mission              @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  operator    Operator             @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+
+  @@unique([missionId, operatorId])
+  @@index([operatorId])
+  @@index([state])
+  @@map("mission_progress")
+}
+
+// ─── Teams / facções (sessão 1.5) ───────────────────────────────────────────
+
+/// Faction within an event — identity carrier (color + emblem) for groups of
+/// operators. UNIQUE (event_id, name) keeps faction names per-event unambiguous.
+model Team {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventId     String   @map("event_id") @db.Uuid
+  name        String
+  color       String
+  emblem      String?
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  event       Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  squads      Squad[]
+  wonRounds   Round[]  @relation("RoundWinner")
+
+  @@unique([eventId, name])
+  @@index([eventId])
+  @@map("teams")
+}
+
+/// Tactical profile for a field operator. One per user (1:1, optional —
+/// admin/instructor users have no Operator row).
+model Operator {
+  id                String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId            String             @unique @map("user_id") @db.Uuid
+  callsign          String             @unique
+  bio               String?
+  emergencyContact  String?            @map("emergency_contact")
+  bloodType         BloodType          @default(UNKNOWN) @map("blood_type")
+  status            OperatorStatus     @default(ACTIVE)
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  squadMemberships  SquadMember[]
+  squadsLed         Squad[]            @relation("SquadLeader")
+  positions         PositionHistory[]
+  missionProgresses MissionProgress[]
+  reputationLogs    ReputationLog[]
+  cheatSuspicions   CheatSuspicion[]
+  eliminations      RoundElimination[] @relation("EliminationVictim")
+  killsScored       RoundElimination[] @relation("EliminationKiller")
+
+  @@map("operators")
+}
+
+// ─── Squads (sessão 1.6) ────────────────────────────────────────────────────
+
+enum SquadStatus {
+  ACTIVE
+  INACTIVE
+  DISBANDED
+}
+
+/// Sub-group within a Team. UNIQUE (team_id, name) keeps squad names per-team
+/// unambiguous. leaderId is optional and must be a member of the squad — the
+/// service enforces that invariant on PATCH and on member removal.
+model Squad {
+  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId      String        @map("team_id") @db.Uuid
+  name        String
+  description String?
+  leaderId    String?       @map("leader_id") @db.Uuid
+  status      SquadStatus   @default(ACTIVE)
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  team        Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  leader      Operator?     @relation("SquadLeader", fields: [leaderId], references: [id], onDelete: SetNull)
+  members     SquadMember[]
+
+  @@unique([teamId, name])
+  @@index([teamId])
+  @@index([leaderId])
+  @@map("squads")
+}
+
+// ─── Position history (sessão 1.9) ──────────────────────────────────────────
+
+/// Append-only history of every position ingested for an operator.
+///
+/// `lat`/`lon` are stored as Float because Prisma cannot type the PostGIS
+/// `geography(Point, 4326)` column. The migration adds a generated
+/// `location` column (`ST_SetSRID(ST_MakePoint(lon, lat), 4326)::geography`)
+/// with a GIST index — spatial queries (zone hits, missions) use that one;
+/// reads via Prisma use lat/lon directly.
+///
+/// `clientEventId` is the UUID generated by the mobile app for idempotency
+/// across reconnections. The processor SETNX-dedups in Redis (5 min) so
+/// two POSTs with the same id produce a single row.
+///
+/// Partitioning by day + 90d retention to S3 (CLAUDE.md §7) lands in
+/// session 4.x — for now this is a vanilla append-only table.
+model PositionHistory {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  operatorId    String   @map("operator_id") @db.Uuid
+  eventId       String   @map("event_id") @db.Uuid
+  lat           Float
+  lon           Float
+  accuracyM     Float?   @map("accuracy_m")
+  headingDeg    Float?   @map("heading_deg")
+  speedMps      Float?   @map("speed_mps")
+  clientEventId String   @map("client_event_id") @db.Uuid
+  recordedAt    DateTime @map("recorded_at") @db.Timestamptz(6)
+  receivedAt    DateTime @default(now()) @map("received_at") @db.Timestamptz(6)
+  operator      Operator @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  event         Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([operatorId, recordedAt(sort: Desc)])
+  @@index([eventId, recordedAt(sort: Desc)])
+  @@index([clientEventId])
+  @@map("position_history")
+}
+
+/// Junction Squad <-> Operator. Hard delete on removal — audit/history of
+/// joins/leaves comes when the audit module lands (Fase 4.x).
+model SquadMember {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  squadId    String   @map("squad_id") @db.Uuid
+  operatorId String   @map("operator_id") @db.Uuid
+  joinedAt   DateTime @default(now()) @map("joined_at") @db.Timestamptz(6)
+  squad      Squad    @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  operator   Operator @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+
+  @@unique([squadId, operatorId])
+  @@index([operatorId])
+  @@map("squad_members")
+}
+
+// ─── Notifications + device tokens (sessão 1.14) ────────────────────────────
+
+enum NotificationTarget {
+  GLOBAL
+  EVENT
+  TEAM
+  SQUAD
+  INDIVIDUAL
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+enum DevicePlatform {
+  IOS
+  ANDROID
+}
+
+/// Outbound push notification. Engine (1.13) emits these automatically when a
+/// mission completes; admin can also create them ad-hoc through the controller.
+/// `target` decides which devices receive it; the worker resolves to the FCM
+/// token list at dispatch time so subsequent device registrations land too.
+model Notification {
+  id          String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  target      NotificationTarget
+  targetId    String?            @map("target_id") @db.Uuid
+  title       String
+  body        String
+  status      NotificationStatus @default(PENDING)
+  sentCount   Int                @default(0) @map("sent_count")
+  failedCount Int                @default(0) @map("failed_count")
+  sentAt      DateTime?          @map("sent_at") @db.Timestamptz(6)
+  error       String?
+  createdById String?            @map("created_by_id") @db.Uuid
+  createdAt   DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy   User?              @relation("NotificationCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([target, targetId])
+  @@index([status])
+  @@map("notifications")
+}
+
+/// FCM device token registered by the mobile app. UNIQUE on the token itself
+/// (Firebase guarantees global uniqueness per device install).
+model DeviceToken {
+  id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String         @map("user_id") @db.Uuid
+  token        String         @unique
+  platform     DevicePlatform
+  registeredAt DateTime       @default(now()) @map("registered_at") @db.Timestamptz(6)
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("device_tokens")
+}
+
+// ─── Reputation (sessão 1.16) ───────────────────────────────────────────────
+
+enum ReputationKind {
+  PENALTY
+  COMMENDATION
+}
+
+enum ReputationSeverity {
+  MINOR
+  MAJOR
+  SEVERE
+}
+
+enum ReputationReason {
+  CHEATING
+  AFK
+  NO_SHOW
+  ABUSIVE_BEHAVIOR
+  UNSAFE_CONDUCT
+  OUTSTANDING_PERFORMANCE
+  TEAMWORK
+  OTHER
+}
+
+/// Append-only audit trail of penalties/commendations on operators. `delta` is
+/// derived from `kind` × `severity` in the service (admin doesn't pick the
+/// number — keeps abuse in check). Score is computed on-read as 100 + Σ(delta);
+/// no denormalized column on Operator until observability shows pressure.
+///
+/// `eventId` is optional context (which event surfaced the infraction); FK is
+/// SET NULL so the log persists if the event is purged. `createdById` is the
+/// admin/instructor who recorded; nullable for system-generated entries
+/// (anti-cheat in 1.17 will use this path).
+model ReputationLog {
+  id          String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  operatorId  String             @map("operator_id") @db.Uuid
+  eventId     String?            @map("event_id") @db.Uuid
+  kind        ReputationKind
+  severity    ReputationSeverity
+  reason      ReputationReason
+  delta       Int
+  note        String?
+  createdById String?            @map("created_by_id") @db.Uuid
+  createdAt   DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  operator    Operator           @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  event       Event?             @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  createdBy   User?              @relation("ReputationAuthor", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([operatorId])
+  @@index([eventId])
+  @@index([operatorId, createdAt(sort: Desc)])
+  @@map("reputation_logs")
+}
+
+// ─── Anti-cheat (sessão 1.17) ───────────────────────────────────────────────
+
+enum CheatDetector {
+  SPEED_IMPOSSIBLE
+  LOCATION_JUMP
+  GPS_INCONSISTENCY
+}
+
+/// Kept as a dedicated enum (not shared with ReputationSeverity) so the two
+/// scales can evolve independently — anti-cheat severity is a hardware/physics
+/// judgment, reputation severity is an administrative judgment.
+enum CheatSeverity {
+  MINOR
+  MAJOR
+  SEVERE
+}
+
+/// Append-only audit trail of detector hits. One row per (position, detector)
+/// that fired. `evidence` is detector-specific JSON (deltaM, dtSeconds,
+/// calcSpeedMps, accuracyM, ...) — frozen at write time so future threshold
+/// tuning never rewrites history.
+///
+/// `eventId` FK is SET NULL: log survives event purge for long-term cheater
+/// pattern analysis across events. The optional reputation hook (severity >=
+/// MAJOR) writes a parallel `reputation_logs` row via ReputationService; the
+/// two tables are intentionally not joined (one is evidence, the other is
+/// score).
+model CheatSuspicion {
+  id         String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  operatorId String        @map("operator_id") @db.Uuid
+  eventId    String?       @map("event_id") @db.Uuid
+  detector   CheatDetector
+  severity   CheatSeverity
+  evidence   Json
+  recordedAt DateTime      @map("recorded_at") @db.Timestamptz(6)
+  createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  operator   Operator      @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  event      Event?        @relation(fields: [eventId], references: [id], onDelete: SetNull)
+
+  @@index([operatorId])
+  @@index([eventId])
+  @@index([operatorId, createdAt(sort: Desc)])
+  @@map("cheat_suspicions")
+}
+
+// ─── Tactical layer (sessão 1.21) ───────────────────────────────────────────
+
+/// Organizational training unit (battalion, school, academy). Flat hierarchy
+/// for now — parent/child can be added later when a real second-level need
+/// surfaces (CLAUDE.md §3.6).
+model Unit {
+  id           String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String
+  abbreviation String?
+  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  instructors  UnitInstructor[]
+  classes      Class[]
+
+  @@unique([name])
+  @@map("units")
+}
+
+/// Junction: instructor users associated to a unit. The service rejects the
+/// insert when the user's role is not INSTRUCTOR (admin keeps their global
+/// access without needing an explicit assignment — same posture as how admin
+/// implicit-membership works in voice/AAR).
+model UnitInstructor {
+  unitId     String   @map("unit_id") @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  assignedAt DateTime @default(now()) @map("assigned_at") @db.Timestamptz(6)
+  unit       Unit     @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([unitId, userId])
+  @@index([userId])
+  @@map("unit_instructors")
+}
+
+enum ClassStatus {
+  PLANNED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+/// Training class (turma): a cohort taking a course inside a unit. The lead
+/// instructor is a single user (FK), but more instructors can co-teach via
+/// `unit_instructors` membership (no per-class assignment table until needed).
+model Class {
+  id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  unitId           String      @map("unit_id") @db.Uuid
+  leadInstructorId String      @map("lead_instructor_id") @db.Uuid
+  name             String
+  startsAt         DateTime    @map("starts_at") @db.Timestamptz(6)
+  endsAt           DateTime?   @map("ends_at") @db.Timestamptz(6)
+  status           ClassStatus @default(PLANNED)
+  createdAt        DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  unit             Unit        @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  leadInstructor   User        @relation("ClassLeadInstructor", fields: [leadInstructorId], references: [id], onDelete: Restrict)
+  exercises        Exercise[]
+
+  @@index([unitId])
+  @@index([leadInstructorId])
+  @@index([status])
+  @@map("classes")
+}
+
+enum ExerciseStatus {
+  PLANNED
+  RUNNING
+  COMPLETED
+  CANCELLED
+}
+
+/// Training exercise within a class. Optional 1:1 link to an Event with
+/// mode=TACTICAL_TRAINING — when set, the exercise reuses the regular
+/// event infrastructure (zones, missions, positioning, anti-cheat). The
+/// service enforces the mode constraint on write.
+model Exercise {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  classId     String         @map("class_id") @db.Uuid
+  eventId     String?        @unique @map("event_id") @db.Uuid
+  name        String
+  description String?
+  scheduledAt DateTime?      @map("scheduled_at") @db.Timestamptz(6)
+  status      ExerciseStatus @default(PLANNED)
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  class       Class          @relation(fields: [classId], references: [id], onDelete: Restrict)
+  event       Event?         @relation(fields: [eventId], references: [id], onDelete: SetNull)
+
+  @@index([classId])
+  @@index([status])
+  @@map("exercises")
+}
+
+// ─── Competitive 5×5 (sessão 1.23) ──────────────────────────────────────────
+
+enum RoundStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+/// One round inside a COMPETITIVE event. The owning Event acts as the match
+/// (no separate match entity yet — CLAUDE.md §3.6). `roundNumber` is unique
+/// per event so admins can scrub timeline + AAR by round.
+///
+/// `winningTeamId` is nullable so we can represent ties (e.g., timer expired
+/// with no objective met) and CANCELLED rounds (admin redoing the start).
+/// FK is SET NULL so a deleted team doesn't cascade-delete historic rounds.
+model Round {
+  id            String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventId       String             @map("event_id") @db.Uuid
+  roundNumber   Int                @map("round_number")
+  status        RoundStatus        @default(ACTIVE)
+  startedAt     DateTime           @default(now()) @map("started_at") @db.Timestamptz(6)
+  endedAt       DateTime?          @map("ended_at") @db.Timestamptz(6)
+  winningTeamId String?            @map("winning_team_id") @db.Uuid
+  note          String?
+  createdAt     DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  event         Event              @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  winningTeam   Team?              @relation("RoundWinner", fields: [winningTeamId], references: [id], onDelete: SetNull)
+  eliminations  RoundElimination[]
+
+  @@unique([eventId, roundNumber])
+  @@index([eventId])
+  @@index([status])
+  @@map("rounds")
+}
+
+/// One elimination event inside a Round. `eliminatedById` (the killer) is
+/// nullable so we can record self-kills, suicides, friendly-fire-without-
+/// attribution, and timer-eliminations — the metric still counts the death.
+/// UNIQUE (roundId, eliminatedOperatorId) so the same operator can't be
+/// killed twice in one round (they sit out until next round).
+model RoundElimination {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  roundId              String    @map("round_id") @db.Uuid
+  eliminatedOperatorId String    @map("eliminated_operator_id") @db.Uuid
+  eliminatedById       String?   @map("eliminated_by_id") @db.Uuid
+  eliminatedAt         DateTime  @default(now()) @map("eliminated_at") @db.Timestamptz(6)
+  note                 String?
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  round                Round     @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  eliminated           Operator  @relation("EliminationVictim", fields: [eliminatedOperatorId], references: [id], onDelete: Restrict)
+  killer               Operator? @relation("EliminationKiller", fields: [eliminatedById], references: [id], onDelete: SetNull)
+
+  @@unique([roundId, eliminatedOperatorId])
+  @@index([roundId])
+  @@index([eliminatedOperatorId])
+  @@index([eliminatedById])
+  @@map("round_eliminations")
+}

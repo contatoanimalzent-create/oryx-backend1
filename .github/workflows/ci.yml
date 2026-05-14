@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint / Typecheck / Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+        env:
+          # Boot validation requires these vars at module instantiation time
+          # (services read loadEnv() in field initializers). Values are stubs —
+          # no test currently hits Postgres or Redis. Real services join this
+          # job when integration tests need them (session 4.1).
+          DATABASE_URL: postgresql://oryx:oryx@localhost:5432/oryx
+          REDIS_URL: redis://localhost:6379
+          JWT_ACCESS_SECRET: ci-stub-access-secret-aaaaaaaaaaaaaaaa
+          JWT_REFRESH_SECRET: ci-stub-refresh-secret-bbbbbbbbbbbbbbbb
+
+  terraform:
+    name: Terraform fmt + validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+
+      - name: Format check
+        run: terraform fmt -check -recursive
+
+      - name: Init (no backend)
+        run: terraform init -backend=false
+
+      - name: Validate
+        run: terraform validate
