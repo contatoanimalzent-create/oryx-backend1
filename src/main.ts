@@ -1,9 +1,14 @@
 import 'reflect-metadata';
+// Sentry must initialise before NestFactory so it captures boot-time errors too.
+import { initSentry } from './sentry/sentry';
+initSentry();
+
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { loadEnv } from './config/env';
+import { SentryExceptionFilter } from './sentry/sentry.filter';
 
 function corsOrigin(originConfig: string): true | string[] {
   if (originConfig.trim() === '*') return true;
@@ -18,6 +23,7 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
 
   app.useLogger(app.get(Logger));
+  app.useGlobalFilters(new SentryExceptionFilter());
   app.enableShutdownHooks();
   app.enableCors({
     origin: corsOrigin(env.CORS_ORIGINS),
