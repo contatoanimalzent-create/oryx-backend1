@@ -332,6 +332,17 @@ model Operator {
   cheatSuspicions   CheatSuspicion[]
   eliminations      RoundElimination[] @relation("EliminationVictim")
   killsScored       RoundElimination[] @relation("EliminationKiller")
+  // Sessao 2.x — Social/marketplace
+  friendshipsRequested Friendship[]         @relation("FriendshipRequester")
+  friendshipsReceived  Friendship[]         @relation("FriendshipReceiver")
+  feedPosts            FeedPost[]
+  postLikes            PostLike[]
+  postComments         PostComment[]
+  referralCode         ReferralCode?
+  referralRedemptions  ReferralRedemption[] @relation("Referee")
+  wallet               WalletAccount?
+  productsListed       Product[]
+  ordersAsBuyer        Order[]              @relation("OrderBuyer")
 
   @@map("operators")
 }
@@ -728,4 +739,248 @@ model RoundElimination {
   @@index([eliminatedOperatorId])
   @@index([eliminatedById])
   @@map("round_eliminations")
+}
+
+// ─── Social (sessão 2.1) ────────────────────────────────────────────────────
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+  BLOCKED
+}
+
+/// Bi-directional friendship request. UNIQUE on (requesterId, receiverId)
+/// — application logic ensures we never insert the inverse pair.
+model Friendship {
+  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requesterId String           @map("requester_id") @db.Uuid
+  receiverId  String           @map("receiver_id") @db.Uuid
+  status      FriendshipStatus @default(PENDING)
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  acceptedAt  DateTime?        @map("accepted_at") @db.Timestamptz(6)
+  requester   Operator         @relation("FriendshipRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  receiver    Operator         @relation("FriendshipReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@unique([requesterId, receiverId])
+  @@index([receiverId, status])
+  @@map("friendships")
+}
+
+enum FeedPostKind {
+  CLIP
+  PHOTO
+  TEXT
+  ACHIEVEMENT
+}
+
+model FeedPost {
+  id           String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  authorId     String        @map("author_id") @db.Uuid
+  kind         FeedPostKind  @default(TEXT)
+  caption      String?
+  mediaUrl     String?       @map("media_url")
+  eventId      String?       @map("event_id") @db.Uuid
+  likeCount    Int           @default(0) @map("like_count")
+  commentCount Int           @default(0) @map("comment_count")
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  author       Operator      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  likes        PostLike[]
+  comments     PostComment[]
+
+  @@index([authorId, createdAt])
+  @@index([createdAt])
+  @@map("feed_posts")
+}
+
+model PostLike {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  postId     String   @map("post_id") @db.Uuid
+  operatorId String   @map("operator_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  post       FeedPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  operator   Operator @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, operatorId])
+  @@index([postId])
+  @@map("post_likes")
+}
+
+model PostComment {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  postId     String   @map("post_id") @db.Uuid
+  operatorId String   @map("operator_id") @db.Uuid
+  body       String
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  post       FeedPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  operator   Operator @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+
+  @@index([postId, createdAt])
+  @@map("post_comments")
+}
+
+// ─── Referral (sessão 2.2) ──────────────────────────────────────────────────
+
+model ReferralCode {
+  id          String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  operatorId  String               @unique @map("operator_id") @db.Uuid
+  code        String               @unique
+  createdAt   DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  operator    Operator             @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  redemptions ReferralRedemption[]
+
+  @@map("referral_codes")
+}
+
+model ReferralRedemption {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  codeId       String       @map("code_id") @db.Uuid
+  refereeId    String       @unique @map("referee_id") @db.Uuid
+  rewardCents  Int          @default(2000) @map("reward_cents")
+  rewardPaid   Boolean      @default(false) @map("reward_paid")
+  rewardPaidAt DateTime?    @map("reward_paid_at") @db.Timestamptz(6)
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  code         ReferralCode @relation(fields: [codeId], references: [id], onDelete: Cascade)
+  referee      Operator     @relation("Referee", fields: [refereeId], references: [id], onDelete: Cascade)
+
+  @@index([codeId])
+  @@map("referral_redemptions")
+}
+
+// ─── Wallet (sessão 2.3) ────────────────────────────────────────────────────
+
+enum WalletTxKind {
+  DEPOSIT
+  WITHDRAW
+  REFERRAL_BONUS
+  MARKETPLACE_SALE
+  MARKETPLACE_PURCHASE
+  EVENT_FEE
+  REFUND
+  ADJUSTMENT
+}
+
+enum WalletTxStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model WalletAccount {
+  id           String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  operatorId   String              @unique @map("operator_id") @db.Uuid
+  balanceCents Int                 @default(0) @map("balance_cents")
+  createdAt    DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+  operator     Operator            @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  transactions WalletTransaction[]
+
+  @@map("wallet_accounts")
+}
+
+model WalletTransaction {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  walletId    String         @map("wallet_id") @db.Uuid
+  kind        WalletTxKind
+  status      WalletTxStatus @default(PENDING)
+  amountCents Int            @map("amount_cents")
+  description String
+  externalRef String?        @map("external_ref")
+  metadata    Json?
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  completedAt DateTime?      @map("completed_at") @db.Timestamptz(6)
+  wallet      WalletAccount  @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId, createdAt])
+  @@index([externalRef])
+  @@map("wallet_transactions")
+}
+
+// ─── Marketplace (sessão 2.4) ───────────────────────────────────────────────
+
+enum ProductCategory {
+  REPLICA
+  TACTICAL_GEAR
+  AMMO
+  ACCESSORY
+  PATCH
+  COSMETIC
+  OTHER
+}
+
+enum ProductCondition {
+  NEW
+  LIKE_NEW
+  USED
+  FOR_PARTS
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  SOLD
+  EXPIRED
+  REMOVED
+}
+
+model Product {
+  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sellerId    String           @map("seller_id") @db.Uuid
+  title       String
+  description String
+  category    ProductCategory
+  condition   ProductCondition @default(USED)
+  priceCents  Int              @map("price_cents")
+  city        String
+  state       String
+  photoUrls   String[]         @map("photo_urls")
+  status      ProductStatus    @default(ACTIVE)
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  seller      Operator         @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  orderItems  OrderItem[]
+
+  @@index([status, category, createdAt])
+  @@index([sellerId])
+  @@map("products")
+}
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  PAID
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+model Order {
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  buyerId         String      @map("buyer_id") @db.Uuid
+  totalCents      Int         @map("total_cents")
+  shippingCents   Int         @default(0) @map("shipping_cents")
+  status          OrderStatus @default(PENDING_PAYMENT)
+  shippingAddress Json?       @map("shipping_address")
+  trackingCode    String?     @map("tracking_code")
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  buyer           Operator    @relation("OrderBuyer", fields: [buyerId], references: [id], onDelete: Restrict)
+  items           OrderItem[]
+
+  @@index([buyerId, createdAt])
+  @@index([status])
+  @@map("orders")
+}
+
+model OrderItem {
+  id             String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId        String  @map("order_id") @db.Uuid
+  productId      String  @map("product_id") @db.Uuid
+  qty            Int     @default(1)
+  unitPriceCents Int     @map("unit_price_cents")
+  order          Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product        Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@map("order_items")
 }

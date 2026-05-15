@@ -12,6 +12,7 @@ import { AntiCheatModule } from './modules/anti-cheat/anti-cheat.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CompetitiveModule } from './modules/competitive/competitive.module';
 import { EventsModule } from './modules/events/events.module';
+import { MarketplaceModule } from './modules/marketplace/marketplace.module';
 import { MissionEngineModule } from './modules/mission-engine/mission-engine.module';
 import { MissionsModule } from './modules/missions/missions.module';
 import { MqttModule } from './modules/mqtt/mqtt.module';
@@ -20,11 +21,14 @@ import { OperatorsModule } from './modules/operators/operators.module';
 import { PositionsModule } from './modules/positions/positions.module';
 import { RankingModule } from './modules/ranking/ranking.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
+import { ReferralModule } from './modules/referral/referral.module';
 import { ReputationModule } from './modules/reputation/reputation.module';
+import { SocialModule } from './modules/social/social.module';
 import { SquadsModule } from './modules/squads/squads.module';
 import { TacticalModule } from './modules/tactical/tactical.module';
 import { TeamsModule } from './modules/teams/teams.module';
 import { VoiceModule } from './modules/voice/voice.module';
+import { WalletModule } from './modules/wallet/wallet.module';
 import { ZonesModule } from './modules/zones/zones.module';
 import { PrismaModule } from './shared/database/prisma.module';
 import { RedisModule } from './shared/redis/redis.module';
@@ -83,6 +87,11 @@ const env = loadEnv();
     AarModule,
     TacticalModule,
     CompetitiveModule,
+    // Sessao 2.x — Social/marketplace
+    SocialModule,
+    ReferralModule,
+    WalletModule,
+    MarketplaceModule,
   ],
   controllers: [HealthController],
   providers: [
