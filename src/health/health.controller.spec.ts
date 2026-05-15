@@ -1,10 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { PrismaService } from '../shared/database/prisma.service';
 import type { RedisService } from '../shared/redis/redis.service';
 import { HealthController } from './health.controller';
 
-function makeController(redis: Partial<RedisService>): HealthController {
-  return new HealthController(redis as RedisService);
+function makeController(
+  redis: Partial<RedisService>,
+  prisma: Partial<PrismaService> = { $queryRaw: vi.fn().mockResolvedValue([{ '?column?': 1 }]) },
+): HealthController {
+  return new HealthController(redis as RedisService, prisma as PrismaService);
 }
 
 describe('HealthController', () => {
@@ -33,6 +37,22 @@ describe('HealthController', () => {
     expect(result.redis.status).toBe('ok');
     expect(result.redis.latencyMs).toBe(7);
     expect(result.redis.error).toBeUndefined();
+  });
+
+  it('reports db ok with latency when query resolves', async () => {
+    const controller = makeController({ ping: vi.fn().mockResolvedValue(1) });
+    const result = await controller.db();
+    expect(result.status).toBe('ok');
+    expect(result.latencyMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('reports queue ok when Redis info resolves', async () => {
+    const controller = makeController({
+      ping: vi.fn().mockResolvedValue(1),
+      getClient: vi.fn().mockReturnValue({ info: vi.fn().mockResolvedValue('redis_version:7') }),
+    });
+    const result = await controller.queue();
+    expect(result.status).toBe('ok');
   });
 
   it('reports redis down with error when ping rejects', async () => {

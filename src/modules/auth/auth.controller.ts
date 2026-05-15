@@ -14,10 +14,17 @@ import type { ZodSchema } from 'zod';
 import {
   type AuthResponse,
   type AuthenticatedUser,
+  type EmailVerificationResponse,
+  type IdentityVerificationResponse,
+  type PasswordResetRequestResponse,
+  forgotPasswordSchema,
   loginSchema,
   logoutSchema,
   refreshSchema,
   registerSchema,
+  resetPasswordSchema,
+  verifyEmailSchema,
+  verifyIdentitySchema,
 } from './dto/auth.dto';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
@@ -59,6 +66,35 @@ export class AuthController {
   async logout(@Body() body: unknown): Promise<void> {
     const dto = parseBody(logoutSchema, body);
     await this.auth.logout(dto.refreshToken);
+  }
+
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.ACCEPTED)
+  forgotPassword(@Body() body: unknown): Promise<PasswordResetRequestResponse> {
+    return this.auth.forgotPassword(parseBody(forgotPasswordSchema, body));
+  }
+
+  @Post('reset-password')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async resetPassword(@Body() body: unknown): Promise<void> {
+    await this.auth.resetPassword(parseBody(resetPasswordSchema, body));
+  }
+
+  @Post('verify-email')
+  @HttpCode(HttpStatus.OK)
+  verifyEmail(@Body() body: unknown): Promise<EmailVerificationResponse> {
+    const dto = parseBody(verifyEmailSchema, body);
+    return this.auth.verifyEmail(dto.token);
+  }
+
+  @Post('verify-identity')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.ACCEPTED)
+  verifyIdentity(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() body: unknown,
+  ): Promise<IdentityVerificationResponse> {
+    return this.auth.verifyIdentity(user.id, parseBody(verifyIdentitySchema, body));
   }
 
   @Get('me')

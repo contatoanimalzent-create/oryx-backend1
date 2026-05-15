@@ -25,6 +25,10 @@ describe('AuthController', () => {
     login: ReturnType<typeof vi.fn>;
     refresh: ReturnType<typeof vi.fn>;
     logout: ReturnType<typeof vi.fn>;
+    forgotPassword: ReturnType<typeof vi.fn>;
+    resetPassword: ReturnType<typeof vi.fn>;
+    verifyEmail: ReturnType<typeof vi.fn>;
+    verifyIdentity: ReturnType<typeof vi.fn>;
     getAuthenticatedUser: ReturnType<typeof vi.fn>;
   };
 
@@ -38,6 +42,10 @@ describe('AuthController', () => {
       login: vi.fn(),
       refresh: vi.fn(),
       logout: vi.fn(),
+      forgotPassword: vi.fn(),
+      resetPassword: vi.fn(),
+      verifyEmail: vi.fn(),
+      verifyIdentity: vi.fn(),
       getAuthenticatedUser: vi.fn(),
     };
 
@@ -111,6 +119,63 @@ describe('AuthController', () => {
       service.logout.mockResolvedValue(undefined);
       await expect(controller.logout({ refreshToken: 't' })).resolves.toBeUndefined();
       expect(service.logout).toHaveBeenCalledWith('t');
+    });
+  });
+
+  describe('POST /auth/forgot-password', () => {
+    it('forwards parsed email', async () => {
+      service.forgotPassword.mockResolvedValue({ status: 'accepted' });
+      await controller.forgotPassword({ email: 'OP@ORYX.APP' });
+      expect(service.forgotPassword).toHaveBeenCalledWith({ email: 'op@oryx.app' });
+    });
+  });
+
+  describe('POST /auth/reset-password', () => {
+    it('forwards token and new password', async () => {
+      service.resetPassword.mockResolvedValue(undefined);
+      await controller.resetPassword({
+        token: 'x'.repeat(32),
+        password: 'new-strong-password',
+      });
+      expect(service.resetPassword).toHaveBeenCalledWith({
+        token: 'x'.repeat(32),
+        password: 'new-strong-password',
+      });
+    });
+  });
+
+  describe('POST /auth/verify-email', () => {
+    it('forwards token', async () => {
+      service.verifyEmail.mockResolvedValue({ status: 'verified' });
+      await controller.verifyEmail({ token: 'x'.repeat(32) });
+      expect(service.verifyEmail).toHaveBeenCalledWith('x'.repeat(32));
+    });
+  });
+
+  describe('POST /auth/verify-identity', () => {
+    it('forwards current user id and identity payload', async () => {
+      service.verifyIdentity.mockResolvedValue({
+        id: 'verification-1',
+        status: 'PENDING',
+        createdAt: new Date().toISOString(),
+      });
+
+      await controller.verifyIdentity(
+        { id: 'u-1', email: 'op@oryx.app', displayName: 'Op', role: Role.OPERATOR },
+        {
+          cpf: '12345678901',
+          documentType: 'rg',
+          documentFrontUrl: 'https://cdn.oryxcontrol.com/doc-front.jpg',
+          selfieUrl: 'https://cdn.oryxcontrol.com/selfie.jpg',
+        },
+      );
+
+      expect(service.verifyIdentity).toHaveBeenCalledWith('u-1', {
+        cpf: '12345678901',
+        documentType: 'rg',
+        documentFrontUrl: 'https://cdn.oryxcontrol.com/doc-front.jpg',
+        selfieUrl: 'https://cdn.oryxcontrol.com/selfie.jpg',
+      });
     });
   });
 

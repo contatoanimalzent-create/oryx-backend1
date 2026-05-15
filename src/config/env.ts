@@ -4,6 +4,8 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().max(65535).default(3000),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+  CORS_ORIGINS: z.string().default('*'),
+  SWAGGER_ENABLED: z.coerce.boolean().default(true),
   DATABASE_URL: z
     .string()
     .url()
@@ -27,6 +29,8 @@ const envSchema = z.object({
   // Token TTLs accept the ms-style strings @nestjs/jwt understands ("15m", "30d").
   JWT_ACCESS_TTL: z.string().default('15m'),
   JWT_REFRESH_TTL: z.string().default('30d'),
+  PASSWORD_RESET_TTL_SECONDS: z.coerce.number().int().min(300).max(86_400).default(3_600),
+  EMAIL_VERIFICATION_TTL_SECONDS: z.coerce.number().int().min(300).max(604_800).default(86_400),
 
   // MQTT / AWS IoT Core (sessão 1.8). Default mode is `stub` so dev can issue
   // structurally-correct credentials without an AWS account. `aws` mode plugs

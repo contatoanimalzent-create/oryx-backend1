@@ -1,6 +1,11 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 
-import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Role } from '@prisma/client';
 import * as argon2 from 'argon2';
@@ -9,9 +14,15 @@ import { loadEnv } from '../../config/env';
 import type {
   AuthResponse,
   AuthenticatedUser,
+  EmailVerificationResponse,
+  ForgotPasswordDto,
+  IdentityVerificationResponse,
   LoginDto,
+  PasswordResetRequestResponse,
   RegisterDto,
+  ResetPasswordDto,
   TokenPair,
+  VerifyIdentityDto,
 } from './dto/auth.dto';
 import { AuthRepository } from './auth.repository';
 
@@ -34,8 +45,12 @@ const ARGON2_OPTIONS = {
   parallelism: 1,
 } as const;
 
-function hashRefresh(token: string): string {
+function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
+}
+
+function secureOpaqueToken(): string {
+  return randomBytes(32).toString('base64url');
 }
 
 @Injectable()
@@ -96,7 +111,7 @@ export class AuthService {
       throw new UnauthorizedException('Wrong token type.');
     }
 
-    const stored = await this.repository.findActiveRefreshToken(hashRefresh(refreshToken));
+    const stored = await this.repository.findActiveRefreshToken(hashToken(refreshToken));
     if (!stored || stored.id !== claims.jti) {
       throw new UnauthorizedException('Refresh token revoked or unknown.');
     }
@@ -111,7 +126,7 @@ export class AuthService {
     await this.repository.rotateRefreshToken(stored.id, {
       id: newRefresh.jti,
       userId: user.id,
-      tokenHash: hashRefresh(newRefresh.token),
+      tokenHash: hashToken(newRefresh.token),
       expiresAt: newRefresh.expiresAt,
     });
 
@@ -131,7 +146,7 @@ export class AuthService {
   async logout(refreshToken: string): Promise<void> {
     // Best-effort revoke. Token may already be expired or unknown — that's
     // a successful logout from the client's perspective either way.
-    const stored = await this.repository.findActiveRefreshToken(hashRefresh(refreshToken));
+    const stored = await this.repository.findActiveRefreshToken(hashToken(refreshToken));
     if (stored) {
       await this.repository.revokeRefreshToken(stored.id);
     }
@@ -145,6 +160,68 @@ export class AuthService {
     return this.toAuthenticatedUser(user);
   }
 
+  async forgotPassword(dto: ForgotPasswordDto): Promise<PasswordResetRequestResponse> {
+    const user = await this.repository.findUserByEmail(dto.email);
+    if (!user) {
+      return { status: 'accepted' };
+    }
+
+    const token = secureOpaqueToken();
+    const expiresAt = new Date(Date.now() + this.env.PASSWORD_RESET_TTL_SECONDS * 1000);
+    await this.repository.createPasswordResetToken({
+      userId: user.id,
+      tokenHash: hashToken(token),
+      expiresAt,
+    });
+
+    if (this.env.NODE_ENV === 'production') {
+      return { status: 'accepted', expiresAt: expiresAt.toISOString() };
+    }
+
+    return { status: 'accepted', resetToken: token, expiresAt: expiresAt.toISOString() };
+  }
+
+  async resetPassword(dto: ResetPasswordDto): Promise<void> {
+    const stored = await this.repository.findActivePasswordResetToken(hashToken(dto.token));
+    if (!stored) {
+      throw new BadRequestException('Password reset token is invalid or expired.');
+    }
+
+    const passwordHash = await argon2.hash(dto.password, ARGON2_OPTIONS);
+    await this.repository.usePasswordResetToken(stored.id, stored.userId, passwordHash);
+  }
+
+  async verifyEmail(token: string): Promise<EmailVerificationResponse> {
+    const stored = await this.repository.findActiveEmailVerificationToken(hashToken(token));
+    if (!stored) {
+      throw new BadRequestException('Email verification token is invalid or expired.');
+    }
+
+    await this.repository.useEmailVerificationToken(stored.id);
+    return { status: 'verified' };
+  }
+
+  async verifyIdentity(
+    userId: string,
+    dto: VerifyIdentityDto,
+  ): Promise<IdentityVerificationResponse> {
+    const created = await this.repository.createIdentityVerification({
+      userId,
+      cpf: dto.cpf,
+      documentType: dto.documentType,
+      documentNumber: dto.documentNumber,
+      documentFrontUrl: dto.documentFrontUrl,
+      documentBackUrl: dto.documentBackUrl,
+      selfieUrl: dto.selfieUrl,
+    });
+
+    return {
+      id: created.id,
+      status: created.status,
+      createdAt: created.createdAt.toISOString(),
+    };
+  }
+
   // ─── Internals ─────────────────────────────────────────────────────────
 
   private async issueTokens(userId: string, role: Role): Promise<TokenPair> {
@@ -154,7 +231,7 @@ export class AuthService {
     await this.repository.createRefreshToken({
       id: refresh.jti,
       userId,
-      tokenHash: hashRefresh(refresh.token),
+      tokenHash: hashToken(refresh.token),
       expiresAt: refresh.expiresAt,
     });
 

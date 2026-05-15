@@ -29,6 +29,14 @@ describe('AuthService', () => {
     findActiveRefreshToken: ReturnType<typeof vi.fn>;
     revokeRefreshToken: ReturnType<typeof vi.fn>;
     rotateRefreshToken: ReturnType<typeof vi.fn>;
+    updateUserPassword: ReturnType<typeof vi.fn>;
+    createPasswordResetToken: ReturnType<typeof vi.fn>;
+    findActivePasswordResetToken: ReturnType<typeof vi.fn>;
+    usePasswordResetToken: ReturnType<typeof vi.fn>;
+    createEmailVerificationToken: ReturnType<typeof vi.fn>;
+    findActiveEmailVerificationToken: ReturnType<typeof vi.fn>;
+    useEmailVerificationToken: ReturnType<typeof vi.fn>;
+    createIdentityVerification: ReturnType<typeof vi.fn>;
   };
 
   beforeAll(() => {
@@ -44,6 +52,14 @@ describe('AuthService', () => {
       findActiveRefreshToken: vi.fn(),
       revokeRefreshToken: vi.fn(),
       rotateRefreshToken: vi.fn(),
+      updateUserPassword: vi.fn(),
+      createPasswordResetToken: vi.fn(),
+      findActivePasswordResetToken: vi.fn(),
+      usePasswordResetToken: vi.fn(),
+      createEmailVerificationToken: vi.fn(),
+      findActiveEmailVerificationToken: vi.fn(),
+      useEmailVerificationToken: vi.fn(),
+      createIdentityVerification: vi.fn(),
     };
 
     const moduleRef = await Test.createTestingModule({
@@ -284,6 +300,88 @@ describe('AuthService', () => {
       repo.findActiveRefreshToken.mockResolvedValue(null);
       await service.logout('whatever');
       expect(repo.revokeRefreshToken).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('forgot/reset password', () => {
+    it('returns accepted without leaking whether an email exists', async () => {
+      repo.findUserByEmail.mockResolvedValue(null);
+      await expect(service.forgotPassword({ email: 'missing@oryx.app' })).resolves.toEqual({
+        status: 'accepted',
+      });
+      expect(repo.createPasswordResetToken).not.toHaveBeenCalled();
+    });
+
+    it('creates a hashed password reset token for an existing user', async () => {
+      repo.findUserByEmail.mockResolvedValue({
+        id: 'user-reset',
+        email: 'reset@oryx.app',
+        passwordHash: 'x',
+        displayName: 'Reset',
+        role: Role.OPERATOR,
+      });
+      repo.createPasswordResetToken.mockResolvedValue({});
+
+      const response = await service.forgotPassword({ email: 'reset@oryx.app' });
+
+      expect(response.status).toBe('accepted');
+      expect(response.resetToken).toMatch(/^[\w-]+$/);
+      const createCall = repo.createPasswordResetToken.mock.calls[0][0] as {
+        tokenHash: string;
+      };
+      expect(createCall.tokenHash).not.toBe(response.resetToken);
+      expect(createCall.tokenHash).toMatch(/^[a-f0-9]{64}$/);
+    });
+
+    it('uses reset token and revokes existing refresh sessions', async () => {
+      repo.findActivePasswordResetToken.mockResolvedValue({
+        id: 'prt-1',
+        userId: 'user-reset',
+      });
+      repo.usePasswordResetToken.mockResolvedValue(undefined);
+
+      await service.resetPassword({ token: 'x'.repeat(32), password: 'new-strong-password' });
+
+      expect(repo.usePasswordResetToken).toHaveBeenCalledTimes(1);
+      const [, userId, passwordHash] = repo.usePasswordResetToken.mock.calls[0] as [
+        string,
+        string,
+        string,
+      ];
+      expect(userId).toBe('user-reset');
+      expect(await argon2.verify(passwordHash, 'new-strong-password')).toBe(true);
+    });
+  });
+
+  describe('verify email and identity', () => {
+    it('marks a valid email verification token as used', async () => {
+      repo.findActiveEmailVerificationToken.mockResolvedValue({ id: 'evt-1' });
+      repo.useEmailVerificationToken.mockResolvedValue({});
+
+      await expect(service.verifyEmail('x'.repeat(32))).resolves.toEqual({ status: 'verified' });
+      expect(repo.useEmailVerificationToken).toHaveBeenCalledWith('evt-1');
+    });
+
+    it('creates an identity verification request', async () => {
+      const createdAt = new Date('2026-05-15T00:00:00.000Z');
+      repo.createIdentityVerification.mockResolvedValue({
+        id: 'identity-1',
+        status: 'PENDING',
+        createdAt,
+      });
+
+      await expect(
+        service.verifyIdentity('user-identity', {
+          cpf: '12345678901',
+          documentType: 'rg',
+          documentFrontUrl: 'https://cdn.oryxcontrol.com/front.jpg',
+          selfieUrl: 'https://cdn.oryxcontrol.com/selfie.jpg',
+        }),
+      ).resolves.toEqual({
+        id: 'identity-1',
+        status: 'PENDING',
+        createdAt: createdAt.toISOString(),
+      });
     });
   });
 });

@@ -31,9 +31,40 @@ export const refreshSchema = z.object({
 
 export const logoutSchema = refreshSchema;
 
+export const forgotPasswordSchema = z.object({
+  email: z.string().email().trim().toLowerCase(),
+});
+
+export const resetPasswordSchema = z.object({
+  token: z.string().min(32),
+  password: z.string().min(PASSWORD_MIN).max(PASSWORD_MAX),
+});
+
+export const verifyEmailSchema = z.object({
+  token: z.string().min(32),
+});
+
+const cpfSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{11}$/, 'CPF must contain 11 digits without punctuation');
+
+export const verifyIdentitySchema = z.object({
+  cpf: cpfSchema,
+  documentType: z.string().trim().min(2).max(40),
+  documentNumber: z.string().trim().min(2).max(80).optional(),
+  documentFrontUrl: z.string().url(),
+  documentBackUrl: z.string().url().optional(),
+  selfieUrl: z.string().url(),
+});
+
 export type RegisterDto = z.infer<typeof registerSchema>;
 export type LoginDto = z.infer<typeof loginSchema>;
 export type RefreshDto = z.infer<typeof refreshSchema>;
+export type ForgotPasswordDto = z.infer<typeof forgotPasswordSchema>;
+export type ResetPasswordDto = z.infer<typeof resetPasswordSchema>;
+export type VerifyEmailDto = z.infer<typeof verifyEmailSchema>;
+export type VerifyIdentityDto = z.infer<typeof verifyIdentitySchema>;
 export type LogoutDto = z.infer<typeof logoutSchema>;
 
 export interface AuthenticatedUser {
@@ -53,4 +84,23 @@ export interface TokenPair {
 export interface AuthResponse {
   user: AuthenticatedUser;
   tokens: TokenPair;
+}
+
+export interface AcceptedResponse {
+  status: 'accepted';
+}
+
+export interface PasswordResetRequestResponse extends AcceptedResponse {
+  resetToken?: string;
+  expiresAt?: string;
+}
+
+export interface EmailVerificationResponse {
+  status: 'verified';
+}
+
+export interface IdentityVerificationResponse {
+  id: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  createdAt: string;
 }
