@@ -16,11 +16,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import {
-  createOrderSchema,
-  createProductSchema,
-  updateProductSchema,
-} from './dto/marketplace.dto';
+import { createOrderSchema, createProductSchema, updateProductSchema } from './dto/marketplace.dto';
 import { MarketplaceService } from './marketplace.service';
 
 function parse<T>(schema: { parse: (v: unknown) => T }, value: unknown): T {
@@ -73,10 +69,7 @@ export class MarketplaceController {
   }
 
   @Delete('products/:id')
-  remove(
-    @CurrentUser('id') userId: string,
-    @Param('id', ParseUUIDPipe) id: string,
-  ) {
+  remove(@CurrentUser('id') userId: string, @Param('id', ParseUUIDPipe) id: string) {
     return this.market.removeProduct(userId, id);
   }
 
@@ -98,10 +91,7 @@ export class MarketplaceController {
   }
 
   @Get('orders/:id')
-  getOrder(
-    @CurrentUser('id') userId: string,
-    @Param('id', ParseUUIDPipe) id: string,
-  ) {
+  getOrder(@CurrentUser('id') userId: string, @Param('id', ParseUUIDPipe) id: string) {
     return this.market.getOrder(userId, id);
   }
 }

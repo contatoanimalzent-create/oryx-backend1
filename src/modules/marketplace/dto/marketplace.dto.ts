@@ -3,15 +3,7 @@ import { z } from 'zod';
 export const createProductSchema = z.object({
   title: z.string().min(3).max(120),
   description: z.string().min(10).max(2000),
-  category: z.enum([
-    'REPLICA',
-    'TACTICAL_GEAR',
-    'AMMO',
-    'ACCESSORY',
-    'PATCH',
-    'COSMETIC',
-    'OTHER',
-  ]),
+  category: z.enum(['REPLICA', 'TACTICAL_GEAR', 'AMMO', 'ACCESSORY', 'PATCH', 'COSMETIC', 'OTHER']),
   condition: z.enum(['NEW', 'LIKE_NEW', 'USED', 'FOR_PARTS']).default('USED'),
   priceCents: z.number().int().positive().max(10_000_000),
   city: z.string().min(2).max(100),

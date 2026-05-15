@@ -4,21 +4,11 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  OrderStatus,
-  Prisma,
-  ProductStatus,
-  WalletTxKind,
-  type Product,
-} from '@prisma/client';
+import { OrderStatus, ProductStatus, WalletTxKind, type Product } from '@prisma/client';
 
 import { PrismaService } from '../../shared/database/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
-import type {
-  CreateOrderDto,
-  CreateProductDto,
-  UpdateProductDto,
-} from './dto/marketplace.dto';
+import type { CreateOrderDto, CreateProductDto, UpdateProductDto } from './dto/marketplace.dto';
 
 @Injectable()
 export class MarketplaceService {
@@ -124,9 +114,7 @@ export class MarketplaceService {
         where: { id: { in: productIds }, status: ProductStatus.ACTIVE },
       });
       if (products.length !== productIds.length) {
-        throw new ConflictException(
-          'One or more products are unavailable or already sold.',
-        );
+        throw new ConflictException('One or more products are unavailable or already sold.');
       }
       if (products.some((p) => p.sellerId === buyer.id)) {
         throw new ConflictException('Cannot buy your own products.');
@@ -152,7 +140,7 @@ export class MarketplaceService {
           totalCents: grand,
           shippingCents,
           status: OrderStatus.PAID,
-          shippingAddress: dto.shippingAddress as unknown as Prisma.InputJsonValue,
+          shippingAddress: dto.shippingAddress,
           items: {
             create: dto.items.map((item) => ({
               productId: item.productId,

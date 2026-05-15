@@ -4,12 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  Prisma,
-  WalletTxKind,
-  WalletTxStatus,
-  type WalletAccount,
-} from '@prisma/client';
+import { Prisma, WalletTxKind, WalletTxStatus, type WalletAccount } from '@prisma/client';
 
 import { PrismaService } from '../../shared/database/prisma.service';
 
@@ -23,7 +18,7 @@ interface CreditParams {
   tx?: Prisma.TransactionClient;
 }
 
-interface DebitParams extends CreditParams {}
+type DebitParams = CreditParams;
 
 /**
  * Wallet bookkeeping. All mutations go through credit() / debit() to keep

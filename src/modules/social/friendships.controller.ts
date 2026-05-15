@@ -14,10 +14,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import {
-  friendshipActionSchema,
-  sendFriendRequestSchema,
-} from './dto/social.dto';
+import { friendshipActionSchema, sendFriendRequestSchema } from './dto/social.dto';
 import { SocialService } from './social.service';
 
 function parse<T>(schema: { parse: (v: unknown) => T }, value: unknown): T {

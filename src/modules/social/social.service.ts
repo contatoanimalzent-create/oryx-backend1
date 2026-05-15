@@ -40,9 +40,7 @@ export class SocialService {
       },
     });
     if (existing) {
-      throw new ConflictException(
-        `Friendship already exists in status ${existing.status}.`,
-      );
+      throw new ConflictException(`Friendship already exists in status ${existing.status}.`);
     }
 
     return this.prisma.friendship.create({
@@ -50,11 +48,7 @@ export class SocialService {
     });
   }
 
-  async respondToRequest(
-    receiverUserId: string,
-    friendshipId: string,
-    dto: FriendshipActionDto,
-  ) {
+  async respondToRequest(receiverUserId: string, friendshipId: string, dto: FriendshipActionDto) {
     const receiver = await this.requireOperator(receiverUserId);
     const friendship = await this.prisma.friendship.findUnique({
       where: { id: friendshipId },

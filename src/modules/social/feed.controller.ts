@@ -49,18 +49,12 @@ export class FeedController {
 
   @Post(':id/like')
   @HttpCode(HttpStatus.OK)
-  like(
-    @CurrentUser('id') userId: string,
-    @Param('id', ParseUUIDPipe) id: string,
-  ) {
+  like(@CurrentUser('id') userId: string, @Param('id', ParseUUIDPipe) id: string) {
     return this.social.likePost(userId, id);
   }
 
   @Delete(':id/like')
-  unlike(
-    @CurrentUser('id') userId: string,
-    @Param('id', ParseUUIDPipe) id: string,
-  ) {
+  unlike(@CurrentUser('id') userId: string, @Param('id', ParseUUIDPipe) id: string) {
     return this.social.unlikePost(userId, id);
   }
 

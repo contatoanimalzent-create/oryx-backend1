@@ -1,10 +1,4 @@
-import {
-  ArgumentsHost,
-  Catch,
-  ExceptionFilter,
-  HttpException,
-  Logger,
-} from '@nestjs/common';
+import { Catch, ExceptionFilter, HttpException, Logger } from '@nestjs/common';
 import * as Sentry from '@sentry/node';
 
 /**
@@ -18,9 +12,8 @@ import * as Sentry from '@sentry/node';
 export class SentryExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(SentryExceptionFilter.name);
 
-  catch(exception: unknown, host: ArgumentsHost): void {
-    const isClientError =
-      exception instanceof HttpException && exception.getStatus() < 500;
+  catch(exception: unknown): void {
+    const isClientError = exception instanceof HttpException && exception.getStatus() < 500;
 
     if (!isClientError) {
       Sentry.captureException(exception);
