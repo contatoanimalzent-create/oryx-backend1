@@ -3,8 +3,9 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
-  NotImplementedException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
+import { AccessToken } from 'livekit-server-sdk';
 import { EventStatus, Role, SquadStatus } from '@prisma/client';
 import { createHash } from 'node:crypto';
 
@@ -61,14 +62,7 @@ export class VoiceService {
       return this.stubToken(decision, room, expiresAt);
     }
 
-    // ─── livekit mode (sessão de deploy) ──────────────────────────────────
-    // TODO(deploy): use livekit-server-sdk AccessToken — sign HS256 with
-    // LIVEKIT_API_SECRET, embed `video` grants (roomJoin, room, canPublish,
-    // canSubscribe), set identity + name, exp from ttl. The shape this
-    // service returns stays identical so mobile code doesn't change.
-    throw new NotImplementedException(
-      'VOICE_MODE=livekit is not implemented yet. Switch to VOICE_MODE=stub for local dev.',
-    );
+    return this.liveKitToken(decision, room, expiresAt, ttlSeconds);
   }
 
   // ─── Permission resolution ────────────────────────────────────────────
@@ -217,6 +211,42 @@ export class VoiceService {
       canSubscribe: decision.canSubscribe,
       expiresAt: expiresAt.toISOString(),
       mode: 'stub',
+    };
+  }
+
+  private async liveKitToken(
+    decision: AccessDecision,
+    room: string,
+    expiresAt: Date,
+    ttlSeconds: number,
+  ): Promise<VoiceTokenView> {
+    if (!this.env.LIVEKIT_URL || !this.env.LIVEKIT_API_KEY || !this.env.LIVEKIT_API_SECRET) {
+      throw new ServiceUnavailableException(
+        'LiveKit is not configured. Set LIVEKIT_URL, LIVEKIT_API_KEY and LIVEKIT_API_SECRET.',
+      );
+    }
+
+    const token = new AccessToken(this.env.LIVEKIT_API_KEY, this.env.LIVEKIT_API_SECRET, {
+      identity: decision.identity,
+      name: decision.identity,
+      ttl: ttlSeconds,
+    });
+    token.addGrant({
+      roomJoin: true,
+      room,
+      canPublish: decision.canPublish,
+      canSubscribe: decision.canSubscribe,
+    });
+
+    return {
+      url: this.env.LIVEKIT_URL,
+      token: await token.toJwt(),
+      identity: decision.identity,
+      room,
+      canPublish: decision.canPublish,
+      canSubscribe: decision.canSubscribe,
+      expiresAt: expiresAt.toISOString(),
+      mode: 'livekit',
     };
   }
 

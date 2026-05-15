@@ -10,4 +10,10 @@ export interface MqttCredentialsView {
   topicPrefix: string;
   expiresAt: string;
   mode: 'stub' | 'aws';
+  awsCredentials?: {
+    accessKeyId: string;
+    secretAccessKey: string;
+    sessionToken: string;
+    region: string;
+  };
 }

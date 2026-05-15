@@ -1,4 +1,4 @@
-import { ConflictException, NotFoundException, NotImplementedException } from '@nestjs/common';
+import { ConflictException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { EventStatus, SquadStatus } from '@prisma/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -144,7 +144,7 @@ describe('MqttService', () => {
   });
 
   describe('aws mode', () => {
-    it('throws NotImplemented (501) until deploy session wires STS+SigV4', async () => {
+    it('requires AWS IoT env configuration before issuing STS credentials', async () => {
       vi.resetModules();
       Object.assign(process.env, { ...TEST_ENV, MQTT_MODE: 'aws' });
 
@@ -166,7 +166,7 @@ describe('MqttService', () => {
       }).compile();
       const svc = moduleRef.get(MqttService);
 
-      await expect(svc.issueForUser(USER_ID)).rejects.toThrow(NotImplementedException);
+      await expect(svc.issueForUser(USER_ID)).rejects.toThrow(ServiceUnavailableException);
 
       // Restore stub mode for the rest of the suite.
       Object.assign(process.env, TEST_ENV);

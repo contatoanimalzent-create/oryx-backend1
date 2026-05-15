@@ -1,4 +1,4 @@
-import { NotImplementedException } from '@nestjs/common';
+import { ServiceUnavailableException } from '@nestjs/common';
 import { NotificationStatus, NotificationTarget } from '@prisma/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -22,6 +22,7 @@ describe('NotificationsProcessor', () => {
     findById: ReturnType<typeof vi.fn>;
     resolveTokens: ReturnType<typeof vi.fn>;
     markStatus: ReturnType<typeof vi.fn>;
+    deleteDeviceTokens: ReturnType<typeof vi.fn>;
   };
 
   beforeAll(() => {
@@ -33,6 +34,7 @@ describe('NotificationsProcessor', () => {
       findById: vi.fn(),
       resolveTokens: vi.fn(),
       markStatus: vi.fn().mockResolvedValue({}),
+      deleteDeviceTokens: vi.fn().mockResolvedValue(0),
     };
   });
 
@@ -114,7 +116,7 @@ describe('NotificationsProcessor', () => {
 
   // ─── fcm mode ───────────────────────────────────────────────────────────
 
-  it('throws NotImplementedException in fcm mode and marks FAILED', async () => {
+  it('marks FAILED when fcm mode is not configured', async () => {
     const processor = await makeProcessor('fcm');
     service.findById.mockResolvedValue({
       id: NOTIFICATION_ID,
@@ -124,12 +126,12 @@ describe('NotificationsProcessor', () => {
     });
     service.resolveTokens.mockResolvedValue([{ id: 't1' }]);
 
-    await expect(processor.process(job)).rejects.toThrow(NotImplementedException);
+    await expect(processor.process(job)).rejects.toThrow(ServiceUnavailableException);
     expect(service.markStatus).toHaveBeenCalledWith(
       NOTIFICATION_ID,
       expect.objectContaining({
         status: NotificationStatus.FAILED,
-        error: expect.stringContaining('not implemented'),
+        error: expect.stringContaining('FCM is not configured'),
       }),
     );
   });

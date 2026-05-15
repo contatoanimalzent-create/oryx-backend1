@@ -102,6 +102,12 @@ export class NotificationsService {
     await this.prisma.deviceToken.delete({ where: { token } });
   }
 
+  async deleteDeviceTokens(tokens: string[]): Promise<number> {
+    if (tokens.length === 0) return 0;
+    const result = await this.prisma.deviceToken.deleteMany({ where: { token: { in: tokens } } });
+    return result.count;
+  }
+
   // ─── Internals used by processor ───────────────────────────────────────
 
   /**
@@ -178,7 +184,7 @@ export class NotificationsService {
       sentCount?: number;
       failedCount?: number;
       sentAt?: Date;
-      error?: string;
+      error?: string | null;
     },
   ): Promise<Notification> {
     const data: Prisma.NotificationUpdateInput = { status: update.status };

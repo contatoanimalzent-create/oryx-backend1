@@ -2,7 +2,7 @@ import {
   ConflictException,
   ForbiddenException,
   NotFoundException,
-  NotImplementedException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { EventStatus, Role, SquadStatus } from '@prisma/client';
@@ -344,7 +344,7 @@ describe('VoiceService', () => {
   // ─── Mode ────────────────────────────────────────────────────────────
 
   describe('livekit mode', () => {
-    it('throws NotImplemented until deploy session plugs the real SDK', async () => {
+    it('requires LiveKit env configuration before issuing real tokens', async () => {
       vi.resetModules();
       Object.assign(process.env, { ...TEST_ENV, VOICE_MODE: 'livekit' });
 
@@ -369,7 +369,7 @@ describe('VoiceService', () => {
 
       await expect(
         svc.issueToken(STAFF_USER_ID, { channel: 'COMMAND', channelId: EVENT_ID }),
-      ).rejects.toThrow(NotImplementedException);
+      ).rejects.toThrow(ServiceUnavailableException);
 
       Object.assign(process.env, TEST_ENV);
       vi.resetModules();

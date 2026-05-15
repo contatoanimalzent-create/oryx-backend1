@@ -2,8 +2,9 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
-  NotImplementedException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
+import { AssumeRoleCommand, STSClient } from '@aws-sdk/client-sts';
 import { EventStatus, SquadStatus } from '@prisma/client';
 import { createHash } from 'node:crypto';
 
@@ -14,6 +15,7 @@ import type { MqttCredentialsView } from './dto/mqtt.dto';
 @Injectable()
 export class MqttService {
   private readonly env = loadEnv();
+  private readonly sts = new STSClient({ region: this.env.AWS_REGION });
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -28,8 +30,7 @@ export class MqttService {
    *
    * Mode `stub`: returns a fake but structurally identical URL — useful for
    * mobile dev without an AWS account.
-   * Mode `aws`: throws NotImplementedException until the deploy session
-   * wires STS:AssumeRole + SigV4-signed WSS URL.
+   * Mode `aws`: returns a scoped STS AssumeRole session for AWS IoT Core.
    */
   async issueForUser(userId: string): Promise<MqttCredentialsView> {
     const operator = await this.prisma.operator.findUnique({ where: { userId } });
@@ -71,16 +72,73 @@ export class MqttService {
       return this.stubCredentials(operator.id, topicPrefix, expiresAt);
     }
 
-    // ─── AWS mode (sessão de deploy) ───────────────────────────────────────
-    // TODO(deploy): call STS:AssumeRole with a session policy scoped to
-    // arn:aws:iot:${region}:${account}:client/${operator.id} and
-    // arn:aws:iot:${region}:${account}:topic/${topicPrefix}, then build a
-    // SigV4-signed wss URL pointing at AWS_IOT_ENDPOINT. Requires
-    // @aws-sdk/client-sts + @aws-sdk/signature-v4 (intentionally NOT a
-    // dependency yet — sessão 1.8 ships only the stub).
-    throw new NotImplementedException(
-      'MQTT_MODE=aws is not implemented yet. Switch to MQTT_MODE=stub for local dev.',
+    return this.awsCredentials(operator.id, topicPrefix, expiresAt, ttlSeconds);
+  }
+
+  private async awsCredentials(
+    operatorId: string,
+    topicPrefix: string,
+    expiresAt: Date,
+    ttlSeconds: number,
+  ): Promise<MqttCredentialsView> {
+    if (!this.env.AWS_IOT_ENDPOINT || !this.env.AWS_IOT_ROLE_ARN) {
+      throw new ServiceUnavailableException(
+        'AWS IoT is not configured. Set AWS_IOT_ENDPOINT and AWS_IOT_ROLE_ARN.',
+      );
+    }
+
+    const accountId = this.accountIdFromRoleArn(this.env.AWS_IOT_ROLE_ARN);
+    const policy = {
+      Version: '2012-10-17',
+      Statement: [
+        {
+          Effect: 'Allow',
+          Action: ['iot:Connect'],
+          Resource: [`arn:aws:iot:${this.env.AWS_REGION}:${accountId}:client/${operatorId}`],
+        },
+        {
+          Effect: 'Allow',
+          Action: ['iot:Publish'],
+          Resource: [`arn:aws:iot:${this.env.AWS_REGION}:${accountId}:topic/${topicPrefix}/*`],
+        },
+      ],
+    };
+
+    const response = await this.sts.send(
+      new AssumeRoleCommand({
+        RoleArn: this.env.AWS_IOT_ROLE_ARN,
+        RoleSessionName: `oryx-${operatorId}`.slice(0, 64),
+        DurationSeconds: ttlSeconds,
+        Policy: JSON.stringify(policy),
+      }),
     );
+
+    const credentials = response.Credentials;
+    if (!credentials?.AccessKeyId || !credentials.SecretAccessKey || !credentials.SessionToken) {
+      throw new ServiceUnavailableException('AWS STS did not return complete IoT credentials.');
+    }
+
+    return {
+      url: `wss://${this.env.AWS_IOT_ENDPOINT}/mqtt`,
+      clientId: operatorId,
+      topicPrefix,
+      expiresAt: (credentials.Expiration ?? expiresAt).toISOString(),
+      mode: 'aws',
+      awsCredentials: {
+        accessKeyId: credentials.AccessKeyId,
+        secretAccessKey: credentials.SecretAccessKey,
+        sessionToken: credentials.SessionToken,
+        region: this.env.AWS_REGION,
+      },
+    };
+  }
+
+  private accountIdFromRoleArn(roleArn: string): string {
+    const accountId = roleArn.split(':')[4];
+    if (!accountId) {
+      throw new ServiceUnavailableException('AWS_IOT_ROLE_ARN is not a valid role ARN.');
+    }
+    return accountId;
   }
 
   private stubCredentials(

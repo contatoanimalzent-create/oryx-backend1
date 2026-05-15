@@ -1,5 +1,7 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Logger, NotImplementedException } from '@nestjs/common';
+import { Logger, ServiceUnavailableException } from '@nestjs/common';
+import { cert, getApps, initializeApp, type App } from 'firebase-admin/app';
+import { getMessaging } from 'firebase-admin/messaging';
 import { NotificationStatus } from '@prisma/client';
 import type { Job } from 'bullmq';
 
@@ -11,6 +13,7 @@ import { NotificationsService } from './notifications.service';
 export class NotificationsProcessor extends WorkerHost {
   private readonly logger = new Logger(NotificationsProcessor.name);
   private readonly env = loadEnv();
+  private firebaseApp: App | undefined;
 
   constructor(private readonly service: NotificationsService) {
     super();
@@ -60,16 +63,69 @@ export class NotificationsProcessor extends WorkerHost {
       return;
     }
 
-    // ─── fcm mode (sessão de deploy) ─────────────────────────────────────
-    // TODO(deploy): import firebase-admin, init with FCM_PROJECT_ID +
-    // FCM_CREDENTIALS_JSON, send via messaging().sendEachForMulticast(),
-    // tally success/failure, prune invalid tokens from device_tokens.
-    await this.service.markStatus(notificationId, {
-      status: NotificationStatus.FAILED,
-      error: 'NOTIFICATIONS_MODE=fcm not implemented yet',
-    });
-    throw new NotImplementedException(
-      'NOTIFICATIONS_MODE=fcm is not implemented yet. Switch to NOTIFICATIONS_MODE=stub for local dev.',
+    try {
+      const response = await getMessaging(this.getFirebaseApp()).sendEachForMulticast({
+        tokens: tokens.map((token) => token.token),
+        notification: {
+          title: notification.title,
+          body: notification.body,
+        },
+        data: {
+          notificationId: notification.id,
+          target: notification.target,
+          targetId: notification.targetId ?? '',
+        },
+      });
+
+      const invalidTokens = response.responses
+        .map((result, index) => ({ result, token: tokens[index]?.token }))
+        .filter(({ result }) => this.isInvalidTokenError(result.error?.code))
+        .map(({ token }) => token)
+        .filter((token): token is string => Boolean(token));
+
+      const pruned = await this.service.deleteDeviceTokens(invalidTokens);
+      if (pruned > 0) {
+        this.logger.warn({ notificationId, pruned }, 'removed invalid FCM device tokens');
+      }
+
+      await this.service.markStatus(notificationId, {
+        status: response.failureCount > 0 ? NotificationStatus.FAILED : NotificationStatus.SENT,
+        sentCount: response.successCount,
+        failedCount: response.failureCount,
+        sentAt: response.successCount > 0 ? new Date() : undefined,
+        error: response.failureCount > 0 ? `FCM failed for ${response.failureCount} tokens` : null,
+      });
+    } catch (err) {
+      await this.service.markStatus(notificationId, {
+        status: NotificationStatus.FAILED,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  }
+
+  private getFirebaseApp(): App {
+    if (this.firebaseApp) return this.firebaseApp;
+    if (!this.env.FCM_PROJECT_ID || !this.env.FCM_CREDENTIALS_JSON) {
+      throw new ServiceUnavailableException(
+        'FCM is not configured. Set FCM_PROJECT_ID and FCM_CREDENTIALS_JSON.',
+      );
+    }
+
+    const credentialJson = JSON.parse(this.env.FCM_CREDENTIALS_JSON) as Record<string, unknown>;
+    this.firebaseApp =
+      getApps()[0] ??
+      initializeApp({
+        projectId: this.env.FCM_PROJECT_ID,
+        credential: cert(credentialJson),
+      });
+    return this.firebaseApp;
+  }
+
+  private isInvalidTokenError(code: string | undefined): boolean {
+    return (
+      code === 'messaging/invalid-registration-token' ||
+      code === 'messaging/registration-token-not-registered'
     );
   }
 }
