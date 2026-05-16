@@ -5,6 +5,7 @@ initSentry();
 
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import * as bodyParser from 'body-parser';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { loadEnv } from './config/env';
@@ -25,6 +26,18 @@ async function bootstrap(): Promise<void> {
   app.useLogger(app.get(Logger));
   app.useGlobalFilters(new SentryExceptionFilter());
   app.enableShutdownHooks();
+
+  // Stripe webhook signature verification needs the EXACT raw bytes.
+  // Mount a rawBody-preserving body parser ONLY on /payments/stripe/webhook;
+  // the rest of the app keeps the Nest default JSON parser.
+  app.use(
+    '/payments/stripe/webhook',
+    bodyParser.json({
+      verify: (req: any, _res, buf) => {
+        req.rawBody = buf;
+      },
+    }),
+  );
   app.enableCors({
     origin: corsOrigin(env.CORS_ORIGINS),
     credentials: true,
