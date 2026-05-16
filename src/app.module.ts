@@ -7,17 +7,22 @@ import { LoggerModule } from 'nestjs-pino';
 import { loadEnv } from './config/env';
 import { HealthController } from './health/health.controller';
 import { AarModule } from './modules/aar/aar.module';
+import { AdminModule } from './modules/admin/admin.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { AntiCheatModule } from './modules/anti-cheat/anti-cheat.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { BattlePassModule } from './modules/battle-pass/battle-pass.module';
 import { CompetitiveModule } from './modules/competitive/competitive.module';
+import { CosmeticsModule } from './modules/cosmetics/cosmetics.module';
 import { EventsModule } from './modules/events/events.module';
 import { MarketplaceModule } from './modules/marketplace/marketplace.module';
+import { MediaStorageModule } from './modules/media-storage/media-storage.module';
 import { MissionEngineModule } from './modules/mission-engine/mission-engine.module';
 import { MissionsModule } from './modules/missions/missions.module';
 import { MqttModule } from './modules/mqtt/mqtt.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { OperatorsModule } from './modules/operators/operators.module';
+import { PaymentsModule } from './modules/payments/payments.module';
 import { PositionsModule } from './modules/positions/positions.module';
 import { RankingModule } from './modules/ranking/ranking.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
@@ -87,11 +92,16 @@ const env = loadEnv();
     AarModule,
     TacticalModule,
     CompetitiveModule,
-    // Sessao 2.x — Social/marketplace
+    // Sessao 2.x — Social/marketplace + monetizacao + admin
     SocialModule,
     ReferralModule,
     WalletModule,
     MarketplaceModule,
+    BattlePassModule,
+    CosmeticsModule,
+    MediaStorageModule,
+    PaymentsModule,
+    AdminModule,
   ],
   controllers: [HealthController],
   providers: [
