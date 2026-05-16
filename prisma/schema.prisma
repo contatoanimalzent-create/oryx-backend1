@@ -984,3 +984,125 @@ model OrderItem {
   @@index([orderId])
   @@map("order_items")
 }
+
+// ─── Battle Pass (sessão 2.5) ───────────────────────────────────────────────
+
+model BattlePassSeason {
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  number        Int                 @unique
+  name          String
+  startsAt      DateTime            @map("starts_at") @db.Timestamptz(6)
+  endsAt        DateTime            @map("ends_at") @db.Timestamptz(6)
+  premiumCents  Int                 @default(3990) @map("premium_cents")
+  maxLevel      Int                 @default(50) @map("max_level")
+  createdAt     DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  rewards       BattlePassReward[]
+  userProgress  UserBattlePass[]
+
+  @@map("battle_pass_seasons")
+}
+
+model BattlePassReward {
+  id           String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  seasonId     String           @map("season_id") @db.Uuid
+  level        Int
+  premiumOnly  Boolean          @default(false) @map("premium_only")
+  cosmeticId   String?          @map("cosmetic_id") @db.Uuid
+  xpBonus      Int              @default(0) @map("xp_bonus")
+  walletBonusCents Int          @default(0) @map("wallet_bonus_cents")
+  description  String
+  season       BattlePassSeason @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  cosmetic     Cosmetic?        @relation(fields: [cosmeticId], references: [id])
+
+  @@unique([seasonId, level, premiumOnly])
+  @@map("battle_pass_rewards")
+}
+
+model UserBattlePass {
+  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  operatorId  String           @map("operator_id") @db.Uuid
+  seasonId    String           @map("season_id") @db.Uuid
+  isPremium   Boolean          @default(false) @map("is_premium")
+  currentXp   Int              @default(0) @map("current_xp")
+  claimedLevels Int[]          @default([]) @map("claimed_levels")
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  season      BattlePassSeason @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+
+  @@unique([operatorId, seasonId])
+  @@index([operatorId])
+  @@map("user_battle_passes")
+}
+
+// ─── Cosmetics (sessão 2.6) ─────────────────────────────────────────────────
+
+enum CosmeticKind {
+  PATCH
+  SKIN
+  CALLSIGN_BG
+  AVATAR_FRAME
+}
+
+enum CosmeticRarity {
+  COMMON
+  RARE
+  EPIC
+  LEGENDARY
+}
+
+model Cosmetic {
+  id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code        String          @unique
+  name        String
+  kind        CosmeticKind
+  rarity      CosmeticRarity  @default(COMMON)
+  priceCents  Int             @default(0) @map("price_cents")
+  imageUrl    String          @map("image_url")
+  available   Boolean         @default(true)
+  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  inventory   UserCosmetic[]
+  battlePassRewards BattlePassReward[]
+
+  @@index([kind, available])
+  @@map("cosmetics")
+}
+
+model UserCosmetic {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  operatorId  String   @map("operator_id") @db.Uuid
+  cosmeticId  String   @map("cosmetic_id") @db.Uuid
+  isEquipped  Boolean  @default(false) @map("is_equipped")
+  acquiredAt  DateTime @default(now()) @map("acquired_at") @db.Timestamptz(6)
+  cosmetic    Cosmetic @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
+
+  @@unique([operatorId, cosmeticId])
+  @@index([operatorId, isEquipped])
+  @@map("user_cosmetics")
+}
+
+// ─── Media Storage (sessão 2.7) ─────────────────────────────────────────────
+
+enum MediaKind {
+  PROFILE_PHOTO
+  POST_MEDIA
+  CLIP
+  EVIDENCE
+  DOCUMENT
+}
+
+/// Records every upload presigned by the server. Lets us reconstruct who
+/// uploaded what without trusting the URL alone (S3 keys can be predictable).
+model MediaUpload {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  uploaderId  String     @map("uploader_id") @db.Uuid
+  kind        MediaKind
+  storageKey  String     @unique @map("storage_key")
+  publicUrl   String?    @map("public_url")
+  sizeBytes   Int?       @map("size_bytes")
+  mimeType    String?    @map("mime_type")
+  confirmed   Boolean    @default(false)
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([uploaderId, kind, createdAt])
+  @@map("media_uploads")
+}
